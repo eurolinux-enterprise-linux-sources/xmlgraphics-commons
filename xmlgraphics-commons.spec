@@ -1,6 +1,6 @@
 Name:           xmlgraphics-commons
 Version:        1.3.1
-Release:        1.1%{?dist}
+Release:        1.2%{?dist}
 Epoch:          0
 Summary:        XML Graphics Commons
 
@@ -19,8 +19,15 @@ BuildRequires:  ant-junit >= 0:1.6
 BuildRequires:  junit
 BuildRequires:  jakarta-commons-io >= 0:1.1
 BuildRequires:  jakarta-commons-logging >= 0:1.0.4
-Requires:	jakarta-commons-logging >= 0:1.0.4
+Requires:       jakarta-commons-logging >= 0:1.0.4
 Requires:       jakarta-commons-io >= 0:1.1
+
+# sun's jpeg codec was removed from JDK, replace with imageio
+Patch0:         0001-Port-JPEG-manipulation-to-imageio.patch
+# Some parts expose deprecated sun jpeg codecs in public API, we cannot port
+# those, so at least make sure they don't cause crashes when not direcly used
+Patch1:         0002-Add-stubs-for-com.sun-classes.patch
+Patch2:         0003-Add-testcases-for-JPEG-codec.patch
 
 %description
 Apache XML Graphics Commons is a library that consists of 
@@ -43,16 +50,19 @@ Group:          Documentation
 %setup -q %{name}-%{version}
 rm -f `find . -name "*.jar"`
 
+%patch0 -p1
+%patch1 -p1
+%patch2 -p1
+
+# TIFFImageWriter has never worked on openjdk
+rm -f `find -name TIFFImageWriterTest.java`
 
 %build
 export ANT_HOME=/usr/share/ant
 export JAVA_HOME=/usr/lib/jvm/java-openjdk
-export CLASSPATH=$CLASSPATH:/usr/share/java/commons-logging.jar
 export OPT_JAR_LIST="ant/ant-junit junit"
-pushd lib
-ln -sf $(build-classpath commons-io) .
-popd
-ant package javadocs
+build-jar-repository lib commons-io commons-logging
+ant package junit javadocs
 
 %install
 rm -rf $RPM_BUILD_ROOT
@@ -77,6 +87,11 @@ rm -rf $RPM_BUILD_ROOT
 
 
 %changelog
+* Tue Oct 20 2015 Michael Simacek <msimacek@redhat.com> - 0:1.3.1-1.2
+- Replace usages of sun's jpeg codecs with imageio when possible
+- Provide stubs for cases when it's not
+- Enable tests during build
+
 * Sat Jan 9 2010 Alexander Kurtakov <akurtako@redhat.com> 0:1.3.1-1.1
 - Update to 1.3.1.
 - Fix Source0 url.

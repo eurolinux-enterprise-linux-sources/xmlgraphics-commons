@@ -1,0 +1,202 @@
+From d19106813e4c8b0239707d4f0734ac1697c5c0b5 Mon Sep 17 00:00:00 2001
+From: Michael Simacek <msimacek@redhat.com>
+Date: Fri, 20 Nov 2015 10:15:24 +0100
+Subject: [PATCH 1/3] Port JPEG manipulation to imageio
+
+---
+ .../xmlgraphics/image/codec/tiff/TIFFImage.java    | 57 +++++++++-------------
+ .../image/writer/internal/JPEGImageWriter.java     | 39 ++++++---------
+ 2 files changed, 38 insertions(+), 58 deletions(-)
+
+diff --git a/src/java/org/apache/xmlgraphics/image/codec/tiff/TIFFImage.java b/src/java/org/apache/xmlgraphics/image/codec/tiff/TIFFImage.java
+index 39aa1ef..f983723 100644
+--- a/src/java/org/apache/xmlgraphics/image/codec/tiff/TIFFImage.java
++++ b/src/java/org/apache/xmlgraphics/image/codec/tiff/TIFFImage.java
+@@ -42,14 +42,14 @@ import java.util.Map;
+ import java.util.zip.DataFormatException;
+ import java.util.zip.Inflater;
+ 
++import javax.imageio.ImageIO;
++import javax.imageio.ImageReader;
++import javax.imageio.stream.ImageInputStream;
++
+ import org.apache.xmlgraphics.image.codec.util.SeekableStream;
+ import org.apache.xmlgraphics.image.rendered.AbstractRed;
+ import org.apache.xmlgraphics.image.rendered.CachableRed;
+ 
+-import com.sun.image.codec.jpeg.JPEGCodec;
+-import com.sun.image.codec.jpeg.JPEGDecodeParam;
+-import com.sun.image.codec.jpeg.JPEGImageDecoder;
+-
+ public class TIFFImage extends AbstractRed {
+ 
+     // Compression types
+@@ -102,7 +102,7 @@ public class TIFFImage extends AbstractRed {
+     int predictor;
+ 
+     // TTN2 JPEG related variables
+-    JPEGDecodeParam decodeParam = null;
++    ImageReader jpegReader = null;
+     boolean colorConvertJPEG = false;
+ 
+     // DEFLATE variables
+@@ -134,26 +134,19 @@ public class TIFFImage extends AbstractRed {
+      * @param minX the X position of the returned Raster.
+      * @param minY the Y position of the returned Raster.
+      */
+-    private static final Raster decodeJPEG(byte[] data,
+-                                           JPEGDecodeParam decodeParam,
++    private static final Raster decodeJPEG(byte[] data, ImageReader reader,
+                                            boolean colorConvert,
+                                            int minX,
+                                            int minY) {
+         // Create an InputStream from the compressed data array.
+         ByteArrayInputStream jpegStream = new ByteArrayInputStream(data);
+ 
+-        // Create a decoder.
+-        JPEGImageDecoder decoder = decodeParam == null ?
+-            JPEGCodec.createJPEGDecoder(jpegStream) :
+-            JPEGCodec.createJPEGDecoder(jpegStream,
+-                                        decodeParam);
+-
+         // Decode the compressed data into a Raster.
+         Raster jpegRaster;
+         try {
+-            jpegRaster = colorConvert ?
+-                decoder.decodeAsBufferedImage().getWritableTile(0, 0) :
+-                decoder.decodeAsRaster();
++            ImageInputStream iis = ImageIO.createImageInputStream(jpegStream);
++            reader.setInput(iis);
++            jpegRaster = colorConvert ? reader.read(0).getWritableTile(0, 0) : reader.readRaster(0, null);
+         } catch (IOException ioe) {
+             throw new RuntimeException("TIFFImage13");
+         }
+@@ -585,17 +578,17 @@ public class TIFFImage extends AbstractRed {
+                     throw new RuntimeException("TIFFImage16");
+                 }
+ 
+-                // Create decodeParam from JPEGTables field if present.
+-                if(dir.isTagPresent(TIFF_JPEG_TABLES)) {
+-                    TIFFField jpegTableField = dir.getField(TIFF_JPEG_TABLES);
+-                    byte[] jpegTable = jpegTableField.getAsBytes();
+-                    ByteArrayInputStream tableStream =
+-                        new ByteArrayInputStream(jpegTable);
+-                    JPEGImageDecoder decoder =
+-                        JPEGCodec.createJPEGDecoder(tableStream);
+-                    decoder.decodeAsRaster();
+-                    decodeParam = decoder.getJPEGDecodeParam();
+-                }
++            jpegReader = (ImageReader) ImageIO.getImageReadersByMIMEType("image/jpeg").next();
++
++            // Read abbreviated table stream if present
++            if (dir.isTagPresent(TIFF_JPEG_TABLES)) {
++                TIFFField jpegTableField = dir.getField(TIFF_JPEG_TABLES);
++                byte[] jpegTable = jpegTableField.getAsBytes();
++                ImageInputStream tableStream = ImageIO.createImageInputStream(new ByteArrayInputStream(jpegTable));
++                jpegReader.setInput(tableStream);
++                // tables are retained within reader's state
++                jpegReader.getStreamMetadata();
++            }
+ 
+                 break;
+             default:
+@@ -1124,8 +1117,7 @@ public class TIFFImage extends AbstractRed {
+                         } else if (compression == COMP_JPEG_TTN2) {
+ 
+                             stream.readFully(data, 0, byteCount);
+-                            Raster tempTile = decodeJPEG(data,
+-                                                         decodeParam,
++                            Raster tempTile = decodeJPEG(data, jpegReader,
+                                                          colorConvertJPEG,
+                                                          tile.getMinX(),
+                                                          tile.getMinY());
+@@ -1196,8 +1188,8 @@ public class TIFFImage extends AbstractRed {
+                         } else if (compression == COMP_JPEG_TTN2) {
+ 
+                             stream.readFully(data, 0, byteCount);
+-                            tile.setRect(decodeJPEG(data,
+-                                                    decodeParam,
++                            tile.setRect(
++                                    decodeJPEG(data, jpegReader,
+                                                     colorConvertJPEG,
+                                                     tile.getMinX(),
+                                                     tile.getMinY()));
+@@ -1382,8 +1374,7 @@ public class TIFFImage extends AbstractRed {
+                     } else if (compression == COMP_JPEG_TTN2) {
+ 
+                         stream.readFully(data, 0, byteCount);
+-                        tile.setRect(decodeJPEG(data,
+-                                                decodeParam,
++                        tile.setRect(decodeJPEG(data, jpegReader,
+                                                 colorConvertJPEG,
+                                                 tile.getMinX(),
+                                                 tile.getMinY()));
+diff --git a/src/java/org/apache/xmlgraphics/image/writer/internal/JPEGImageWriter.java b/src/java/org/apache/xmlgraphics/image/writer/internal/JPEGImageWriter.java
+index 35de083..e5e1561 100644
+--- a/src/java/org/apache/xmlgraphics/image/writer/internal/JPEGImageWriter.java
++++ b/src/java/org/apache/xmlgraphics/image/writer/internal/JPEGImageWriter.java
+@@ -19,20 +19,19 @@
+ 
+ package org.apache.xmlgraphics.image.writer.internal;
+ 
+-import java.awt.image.BufferedImage;
+ import java.awt.image.RenderedImage;
+ import java.io.IOException;
+ import java.io.OutputStream;
+ 
+-import org.apache.xmlgraphics.image.GraphicsUtil;
++import javax.imageio.IIOImage;
++import javax.imageio.ImageIO;
++import javax.imageio.ImageWriteParam;
++import javax.imageio.stream.ImageOutputStream;
++
+ import org.apache.xmlgraphics.image.writer.AbstractImageWriter;
+ import org.apache.xmlgraphics.image.writer.ImageWriter;
+ import org.apache.xmlgraphics.image.writer.ImageWriterParams;
+ 
+-import com.sun.image.codec.jpeg.JPEGCodec;
+-import com.sun.image.codec.jpeg.JPEGEncodeParam;
+-import com.sun.image.codec.jpeg.JPEGImageEncoder;
+-
+ /**
+  * ImageWriter implementation that uses the sun.com.image.codec.jpeg
+  * intefaces to write JPEG files.
+@@ -57,26 +56,16 @@ public class JPEGImageWriter extends AbstractImageWriter {
+      */
+     public void writeImage(RenderedImage image, OutputStream out,
+             ImageWriterParams params) throws IOException {
+-        BufferedImage bi;
+-        if (image instanceof BufferedImage) {
+-            bi = (BufferedImage)image;
+-        } else {
+-            //TODO Is this the right way?
+-            bi = GraphicsUtil.makeLinearBufferedImage(
+-                    image.getWidth(), image.getHeight(), false);
+-        }
+-        JPEGImageEncoder encoder = JPEGCodec.createJPEGEncoder(out);
+-        if (params != null) {
+-            JPEGEncodeParam param = encoder.getDefaultJPEGEncodeParam(bi);
+-            if (params.getJPEGQuality() != null) {
+-                param.setQuality(
+-                        params.getJPEGQuality().floatValue(),
+-                        params.getJPEGForceBaseline().booleanValue());
+-            }
+-            encoder.encode(bi, param);
+-        } else {
+-            encoder.encode(bi);
++        javax.imageio.ImageWriter writer = (javax.imageio.ImageWriter) ImageIO.getImageWritersByMIMEType("image/jpeg")
++                .next();
++        ImageWriteParam writeParam = writer.getDefaultWriteParam();
++        writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
++        if (params != null && params.getJPEGQuality() != null) {
++            writeParam.setCompressionQuality(params.getJPEGQuality().floatValue());
+         }
++        ImageOutputStream ios = ImageIO.createImageOutputStream(out);
++        writer.setOutput(ios);
++        writer.write(null, new IIOImage(image, null, null), writeParam);
+     }
+ 
+     /**
+-- 
+2.5.0
+
