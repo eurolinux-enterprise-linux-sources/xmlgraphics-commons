@@ -1,6 +1,6 @@
 Name:           xmlgraphics-commons
 Version:        1.5
-Release:        2%{?dist}
+Release:        3%{?dist}
 Epoch:          0
 Summary:        XML Graphics Commons
 
@@ -78,6 +78,9 @@ cp -pr build/javadocs/* $RPM_BUILD_ROOT%{_javadocdir}/%{name}
 
 
 %changelog
+* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 01.5-3
+- Mass rebuild 2013-12-27
+
 * Fri Jun 28 2013 Mikolaj Izdebski <mizdebsk@redhat.com> - 0:1.5-2
 - Rebuild to regenerate API documentation
 - Resolves: CVE-2013-1571
